@@ -179,14 +179,27 @@ def find_kimi_cli_root() -> Path | None:
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
+_SLASH_ANCHORS = ["editor", "changelog", "theme", "feedback", "clear", "new"]
+
 def find_insertion_line(source: str) -> int | None:
-    """Return the 1-based line of the first decorator of the module-level 'editor' function."""
+    """Return the 1-based line before which the patch should be inserted.
+
+    Tries each function name in _SLASH_ANCHORS in order — the first one found
+    at module level is used as the insertion point. This handles version
+    differences where a given function may not exist yet.
+    """
     try:
         tree = ast.parse(source)
     except SyntaxError:
         return None
-    for node in tree.body:
-        if isinstance(node, ast.AsyncFunctionDef) and node.name == "editor":
+    funcs: dict[str, ast.AsyncFunctionDef | ast.FunctionDef] = {
+        node.name: node
+        for node in tree.body
+        if isinstance(node, (ast.AsyncFunctionDef, ast.FunctionDef))
+    }
+    for name in _SLASH_ANCHORS:
+        node = funcs.get(name)
+        if node is not None:
             if node.decorator_list:
                 return node.decorator_list[0].lineno
             return node.lineno
@@ -310,11 +323,14 @@ def restore_prompt(target: Path) -> bool:
 # ── Orchestration ─────────────────────────────────────────────────────────────
 
 def apply(root: Path) -> bool:
-    ok = apply_slash(root / TARGET_SLASH)
-    ok = apply_prompt(root / TARGET_PROMPT) and ok
-    if ok:
-        print("[INFO] Restart kimi-cli for /thinking and Ctrl+T to be available.")
-    return ok
+    slash_ok = apply_slash(root / TARGET_SLASH)
+    if not slash_ok:
+        return False
+    prompt_ok = apply_prompt(root / TARGET_PROMPT)
+    if not prompt_ok:
+        return False
+    print("[INFO] Restart kimi-cli for /thinking and Ctrl+T to be available.")
+    return True
 
 
 def restore(root: Path) -> bool:
