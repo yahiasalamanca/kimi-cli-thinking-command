@@ -114,79 +114,104 @@ KB_ANCHOR = '        @_kb.add("c-x", eager=True)\n'
 TIPS_ANCHOR = '        "ctrl-x: toggle mode",\n'
 TIPS_INSERT = '        "ctrl-t: thinking mode",\n'
 
+# ── Slash anchor functions (tried in order) ───────────────────────────────────
+
+_SLASH_ANCHORS = ["editor", "changelog", "theme", "feedback", "clear", "new"]
+
 
 # ── Package discovery ─────────────────────────────────────────────────────────
 
+def _check_root(candidate: Path) -> Path | None:
+    return candidate if (candidate / TARGET_SLASH).exists() else None
+
+
 def find_kimi_cli_root() -> Path | None:
     """Locate the installed kimi_cli package root directory."""
-    # Strategy 1: importlib (works when running inside the same env)
+    # Strategy 1: importlib — most reliable, works when running inside the same env
     spec = importlib.util.find_spec("kimi_cli")
     if spec is not None and spec.origin is not None:
-        root = Path(spec.origin).parent
-        if (root / TARGET_SLASH).exists():
+        root = _check_root(Path(spec.origin).parent)
+        if root:
             return root
 
-    # Strategy 2: uv tool dir
-    try:
-        result = subprocess.run(
-            ["uv", "tool", "dir", "kimi-cli"],
-            capture_output=True, text=True, timeout=5,
-        )
-        if result.returncode == 0:
-            uv_dir = Path(result.stdout.strip())
-            # Linux / macOS: lib/python3.x/site-packages/
-            for candidate in uv_dir.glob("lib/python*/site-packages/kimi_cli"):
-                if (candidate / TARGET_SLASH).exists():
-                    return candidate
-            # Windows: Lib/site-packages/
-            candidate = uv_dir / "Lib" / "site-packages" / "kimi_cli"
-            if (candidate / TARGET_SLASH).exists():
-                return candidate
-    except Exception:
-        pass
+    # Strategy 2: uv tool dir — respects UV_TOOL_DIR and all uv env overrides
+    uv_dir: Path | None = None
+    uv_tool_dir_env = os.environ.get("UV_TOOL_DIR")
+    if uv_tool_dir_env:
+        uv_dir = Path(uv_tool_dir_env) / "kimi-cli"
+    else:
+        try:
+            result = subprocess.run(
+                ["uv", "tool", "dir", "kimi-cli"],
+                capture_output=True, text=True, timeout=5,
+            )
+            if result.returncode == 0:
+                uv_dir = Path(result.stdout.strip())
+        except Exception:
+            pass
+    if uv_dir is not None:
+        # Linux / macOS: lib/python3.x/site-packages/
+        for candidate in uv_dir.glob("lib/python*/site-packages/kimi_cli"):
+            root = _check_root(candidate)
+            if root:
+                return root
+        # Windows: Lib/site-packages/ (no python-version subdirectory)
+        root = _check_root(uv_dir / "Lib" / "site-packages" / "kimi_cli")
+        if root:
+            return root
 
     # Strategy 3: follow the kimi binary (shutil.which is cross-platform)
     kimi_bin = shutil.which("kimi")
     if kimi_bin:
         pkg_base = Path(kimi_bin).resolve().parent.parent
-        # Linux / macOS: bin/ sibling is lib/python3.x/site-packages/
         for candidate in (pkg_base / "lib").rglob("site-packages/kimi_cli"):
-            if (candidate / TARGET_SLASH).exists():
-                return candidate
-        # Windows: Scripts/ sibling is Lib/site-packages/
-        candidate = pkg_base / "Lib" / "site-packages" / "kimi_cli"
-        if (candidate / TARGET_SLASH).exists():
-            return candidate
+            root = _check_root(candidate)
+            if root:
+                return root
+        root = _check_root(pkg_base / "Lib" / "site-packages" / "kimi_cli")
+        if root:
+            return root
 
-    # Strategy 4: common hardcoded paths
+    # Strategy 4: hardcoded platform paths
     home = Path.home()
-    candidates = [
-        home / ".local/share/uv/tools/kimi-cli/lib/python3.13/site-packages/kimi_cli",
-        home / ".local/share/uv/tools/kimi-cli/lib/python3.12/site-packages/kimi_cli",
-        home / ".local/share/uv/tools/kimi-cli/lib/python3.11/site-packages/kimi_cli",
-    ]
+    python_versions = ["python3.13", "python3.12", "python3.11"]
+
+    # Linux / macOS (XDG): respects $XDG_DATA_HOME, falls back to ~/.local/share
+    xdg_data = os.environ.get("XDG_DATA_HOME")
+    uv_data = Path(xdg_data) / "uv" if xdg_data else home / ".local" / "share" / "uv"
+    for py in python_versions:
+        root = _check_root(uv_data / "tools" / "kimi-cli" / "lib" / py / "site-packages" / "kimi_cli")
+        if root:
+            return root
+
+    # macOS legacy path (pre-XDG uv installs used ~/Library/Application Support/uv)
+    if sys.platform == "darwin":
+        mac_legacy = home / "Library" / "Application Support" / "uv" / "tools" / "kimi-cli"
+        for py in python_versions:
+            root = _check_root(mac_legacy / "lib" / py / "site-packages" / "kimi_cli")
+            if root:
+                return root
+
+    # Windows: %APPDATA%\uv\tools\kimi-cli\Lib\site-packages\kimi_cli
     appdata = os.environ.get("APPDATA")
     if appdata:
-        candidates.append(
+        root = _check_root(
             Path(appdata) / "uv" / "tools" / "kimi-cli" / "Lib" / "site-packages" / "kimi_cli"
         )
-    for candidate in candidates:
-        if (candidate / TARGET_SLASH).exists():
-            return candidate
+        if root:
+            return root
 
     return None
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
-_SLASH_ANCHORS = ["editor", "changelog", "theme", "feedback", "clear", "new"]
-
 def find_insertion_line(source: str) -> int | None:
     """Return the 1-based line before which the patch should be inserted.
 
     Tries each function name in _SLASH_ANCHORS in order — the first one found
-    at module level is used as the insertion point. This handles version
-    differences where a given function may not exist yet.
+    at module level is used as the insertion point. Handles version differences
+    where a given function may not exist yet.
     """
     try:
         tree = ast.parse(source)
@@ -200,58 +225,53 @@ def find_insertion_line(source: str) -> int | None:
     for name in _SLASH_ANCHORS:
         node = funcs.get(name)
         if node is not None:
-            if node.decorator_list:
-                return node.decorator_list[0].lineno
-            return node.lineno
+            return node.decorator_list[0].lineno if node.decorator_list else node.lineno
     return None
 
 
-def verify_syntax(path: Path) -> bool:
+def verify_syntax(source: str, label: str) -> bool:
     try:
-        ast.parse(path.read_text(encoding="utf-8"))
+        ast.parse(source)
         return True
     except SyntaxError as exc:
-        print(f"[ERROR] Syntax check failed: {exc}")
+        print(f"[ERROR] Syntax check failed for {label}: {exc}")
         return False
 
 
 # ── Slash patch ───────────────────────────────────────────────────────────────
 
-def is_patched_slash(target: Path) -> bool:
-    return PATCH_MARKER_SLASH in target.read_text(encoding="utf-8")
-
-
 def apply_slash(target: Path) -> bool:
-    if is_patched_slash(target):
+    source = target.read_text(encoding="utf-8")
+
+    if PATCH_MARKER_SLASH in source:
         print("[OK] slash.py already patched. Nothing to do.")
         return True
 
-    original = target.read_text(encoding="utf-8")
-
-    insert_at = find_insertion_line(original)
+    insert_at = find_insertion_line(source)
     if insert_at is None:
+        tried = ", ".join(_SLASH_ANCHORS)
         print(
-            "[ERROR] Could not find the 'editor' function in slash.py.\n"
-            "        The file structure may have changed in this version of kimi-cli."
+            f"[ERROR] Could not find a suitable insertion anchor in slash.py.\n"
+            f"        Tried: {tried}\n"
+            f"        The file structure may have changed in this version of kimi-cli."
         )
         return False
 
     backup = target.with_suffix(".py.backup")
     shutil.copy2(target, backup)
 
-    lines = original.splitlines(keepends=True)
-    new_content = (
+    lines = source.splitlines(keepends=True)
+    new_source = (
         "".join(lines[: insert_at - 1])
         + PATCH_CODE_SLASH
         + "".join(lines[insert_at - 1 :])
     )
-    target.write_text(new_content, encoding="utf-8")
 
-    if not verify_syntax(target):
-        print("[ERROR] Patch broke syntax. Restoring backup...")
-        shutil.copy2(backup, target)
+    if not verify_syntax(new_source, "slash.py"):
+        print("[ERROR] Patch produced invalid syntax. Backup left untouched.")
         return False
 
+    target.write_text(new_source, encoding="utf-8")
     print("[OK] slash.py patched (/thinking command + /t alias).")
     print(f"[OK] Backup saved to: {backup}")
     return True
@@ -260,6 +280,9 @@ def apply_slash(target: Path) -> bool:
 def restore_slash(target: Path) -> bool:
     backup = target.with_suffix(".py.backup")
     if not backup.exists():
+        if PATCH_MARKER_SLASH not in target.read_text(encoding="utf-8"):
+            print("[OK] slash.py was not patched. Nothing to restore.")
+            return True
         print("[ERROR] No backup found for slash.py. Cannot restore.")
         return False
     shutil.copy2(backup, target)
@@ -269,24 +292,20 @@ def restore_slash(target: Path) -> bool:
 
 # ── Prompt patch ──────────────────────────────────────────────────────────────
 
-def is_patched_prompt(target: Path) -> bool:
-    return PATCH_MARKER_PROMPT in target.read_text(encoding="utf-8")
-
-
 def apply_prompt(target: Path) -> bool:
-    if is_patched_prompt(target):
+    source = target.read_text(encoding="utf-8")
+
+    if PATCH_MARKER_PROMPT in source:
         print("[OK] prompt.py already patched. Nothing to do.")
         return True
 
-    original = target.read_text(encoding="utf-8")
-
-    if KB_ANCHOR not in original:
+    if KB_ANCHOR not in source:
         print(
             "[ERROR] Could not find the Ctrl+X binding anchor in prompt.py.\n"
             "        The file structure may have changed in this version of kimi-cli."
         )
         return False
-    if TIPS_ANCHOR not in original:
+    if TIPS_ANCHOR not in source:
         print(
             "[ERROR] Could not find the toolbar tips anchor in prompt.py.\n"
             "        The file structure may have changed in this version of kimi-cli."
@@ -296,15 +315,14 @@ def apply_prompt(target: Path) -> bool:
     backup = target.with_suffix(".py.backup")
     shutil.copy2(target, backup)
 
-    new_content = original.replace(KB_ANCHOR, PATCH_KB + KB_ANCHOR, 1)
-    new_content = new_content.replace(TIPS_ANCHOR, TIPS_INSERT + TIPS_ANCHOR, 1)
-    target.write_text(new_content, encoding="utf-8")
+    new_source = source.replace(KB_ANCHOR, PATCH_KB + KB_ANCHOR, 1)
+    new_source = new_source.replace(TIPS_ANCHOR, TIPS_INSERT + TIPS_ANCHOR, 1)
 
-    if not verify_syntax(target):
-        print("[ERROR] Patch broke syntax. Restoring backup...")
-        shutil.copy2(backup, target)
+    if not verify_syntax(new_source, "prompt.py"):
+        print("[ERROR] Patch produced invalid syntax. Backup left untouched.")
         return False
 
+    target.write_text(new_source, encoding="utf-8")
     print("[OK] prompt.py patched (Ctrl+T key binding + toolbar tip).")
     print(f"[OK] Backup saved to: {backup}")
     return True
@@ -313,6 +331,9 @@ def apply_prompt(target: Path) -> bool:
 def restore_prompt(target: Path) -> bool:
     backup = target.with_suffix(".py.backup")
     if not backup.exists():
+        if PATCH_MARKER_PROMPT not in target.read_text(encoding="utf-8"):
+            print("[OK] prompt.py was not patched. Nothing to restore.")
+            return True
         print("[ERROR] No backup found for prompt.py. Cannot restore.")
         return False
     shutil.copy2(backup, target)
@@ -323,31 +344,26 @@ def restore_prompt(target: Path) -> bool:
 # ── Orchestration ─────────────────────────────────────────────────────────────
 
 def apply(root: Path) -> bool:
-    slash_ok = apply_slash(root / TARGET_SLASH)
-    if not slash_ok:
+    if not apply_slash(root / TARGET_SLASH):
         return False
-    prompt_ok = apply_prompt(root / TARGET_PROMPT)
-    if not prompt_ok:
+    if not apply_prompt(root / TARGET_PROMPT):
         return False
     print("[INFO] Restart kimi-cli for /thinking and Ctrl+T to be available.")
     return True
 
 
 def restore(root: Path) -> bool:
-    ok = restore_slash(root / TARGET_SLASH)
-    ok = restore_prompt(root / TARGET_PROMPT) and ok
-    return ok
+    slash_ok = restore_slash(root / TARGET_SLASH)
+    prompt_ok = restore_prompt(root / TARGET_PROMPT)
+    return slash_ok and prompt_ok
 
 
 def status(root: Path) -> None:
-    slash_target = root / TARGET_SLASH
-    prompt_target = root / TARGET_PROMPT
-
-    for label, target, is_patched_fn in (
-        ("slash.py", slash_target, is_patched_slash),
-        ("prompt.py", prompt_target, is_patched_prompt),
+    for label, target, marker in (
+        ("slash.py",  root / TARGET_SLASH,  PATCH_MARKER_SLASH),
+        ("prompt.py", root / TARGET_PROMPT, PATCH_MARKER_PROMPT),
     ):
-        patched = is_patched_fn(target)
+        patched = marker in target.read_text(encoding="utf-8")
         backup = target.with_suffix(".py.backup")
         print(f"[STATUS] {label}: {'patched' if patched else 'not patched'}")
         print(f"[STATUS] {label} target : {target}")
@@ -356,13 +372,13 @@ def status(root: Path) -> None:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="kimi-cli /thinking command installer")
-    parser.add_argument("action", choices=["apply", "restore", "status"], help="Action to perform")
+    parser.add_argument("action", choices=["apply", "restore", "status"])
     args = parser.parse_args()
 
     root = find_kimi_cli_root()
     if root is None:
         print("[ERROR] Could not find kimi-cli installation.")
-        print("        Make sure it is installed and importable.")
+        print("        Make sure kimi-cli is installed (uv tool install kimi-cli).")
         return 1
 
     if args.action == "apply":
