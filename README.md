@@ -19,12 +19,12 @@ The thinking indicator (● / ○) in the status bar reflects the current state.
 
 **Linux / macOS**
 ```bash
-curl -fsSL https://raw.githubusercontent.com/<user>/<repo>/main/kimi-cli-thinking-command.py | python3 - apply
+curl -fsSL https://raw.githubusercontent.com/yahiasalamanca/kimi-cli-thinking-command/main/kimi-cli-thinking-command.py | python3 - apply
 ```
 
 **Windows (PowerShell)**
 ```powershell
-irm https://raw.githubusercontent.com/<user>/<repo>/main/kimi-cli-thinking-command.py | python - apply
+irm https://raw.githubusercontent.com/yahiasalamanca/kimi-cli-thinking-command/main/kimi-cli-thinking-command.py | python - apply
 ```
 
 Then restart kimi-cli. `/thinking`, `/t`, and `Ctrl+T` are immediately available.

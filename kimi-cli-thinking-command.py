@@ -6,14 +6,14 @@ Adds a /thinking (alias /t) slash command and a Ctrl+T keyboard shortcut
 to the local kimi-cli installation.
 
 Usage (Linux / macOS):
-    curl -fsSL https://raw.githubusercontent.com/<user>/<repo>/main/kimi-cli-thinking-command.py | python3 - apply
-    curl -fsSL https://raw.githubusercontent.com/<user>/<repo>/main/kimi-cli-thinking-command.py | python3 - restore
-    curl -fsSL https://raw.githubusercontent.com/<user>/<repo>/main/kimi-cli-thinking-command.py | python3 - status
+    curl -fsSL https://raw.githubusercontent.com/yahiasalamanca/kimi-cli-thinking-command/main/kimi-cli-thinking-command.py | python3 - apply
+    curl -fsSL https://raw.githubusercontent.com/yahiasalamanca/kimi-cli-thinking-command/main/kimi-cli-thinking-command.py | python3 - restore
+    curl -fsSL https://raw.githubusercontent.com/yahiasalamanca/kimi-cli-thinking-command/main/kimi-cli-thinking-command.py | python3 - status
 
 Usage (Windows PowerShell):
-    irm https://raw.githubusercontent.com/<user>/<repo>/main/kimi-cli-thinking-command.py | python - apply
-    irm https://raw.githubusercontent.com/<user>/<repo>/main/kimi-cli-thinking-command.py | python - restore
-    irm https://raw.githubusercontent.com/<user>/<repo>/main/kimi-cli-thinking-command.py | python - status
+    irm https://raw.githubusercontent.com/yahiasalamanca/kimi-cli-thinking-command/main/kimi-cli-thinking-command.py | python - apply
+    irm https://raw.githubusercontent.com/yahiasalamanca/kimi-cli-thinking-command/main/kimi-cli-thinking-command.py | python - restore
+    irm https://raw.githubusercontent.com/yahiasalamanca/kimi-cli-thinking-command/main/kimi-cli-thinking-command.py | python - status
 
 Both patches are applied to the installed site-package and will be overwritten
 whenever you run `uv tool upgrade kimi-cli` (or equivalent). Just re-run
