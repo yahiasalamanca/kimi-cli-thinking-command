@@ -8,9 +8,13 @@ The thinking indicator (● / ○) in the status bar reflects the current state.
 
 ## 🎬 Demo
 
-![Demo of /thinking command and Ctrl+T shortcut](assets/demo.gif)
+<p align="center">
+  <img src="assets/demo.gif" alt="Demo of /thinking command and Ctrl+T shortcut" width="640" />
+</p>
 
-*The `/thinking` command toggles thinking mode, and `Ctrl+T` provides instant keyboard access.*
+<p align="center">
+  <em>The <code>/thinking</code> command toggles thinking mode, and <code>Ctrl+T</code> provides instant keyboard access.</em>
+</p>
 
 ---
 
