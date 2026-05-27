@@ -6,6 +6,12 @@ Toggles thinking mode for the current session without leaving the terminal — t
 
 The thinking indicator (● / ○) in the status bar reflects the current state. `Ctrl+T` also appears in the rotating toolbar tips.
 
+## 🎬 Demo
+
+![Demo of /thinking command and Ctrl+T shortcut](assets/demo.gif)
+
+*The `/thinking` command toggles thinking mode, and `Ctrl+T` provides instant keyboard access.*
+
 ---
 
 ## Requirements
