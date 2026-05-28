@@ -26,6 +26,7 @@ import argparse
 import ast
 import importlib.util
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -206,36 +207,71 @@ def find_kimi_cli_root() -> Path | None:
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
+def _find_env_python(root_pkg: Path) -> Path | None:
+    """Locate the Python interpreter inside the same env as root_pkg.
+
+    root_pkg is e.g. .../site-packages/kimi_cli.
+    We walk up the tree looking for Scripts/python.exe (Windows) or bin/python (Unix).
+    """
+    current = root_pkg
+    for _ in range(4):
+        current = current.parent
+        for sub in ("Scripts/python.exe", "bin/python"):
+            candidate = current / sub
+            if candidate.exists():
+                return candidate
+    return None
+
+
 def find_insertion_line(source: str) -> int | None:
     """Return the 1-based line before which the patch should be inserted.
 
     Tries each function name in _SLASH_ANCHORS in order — the first one found
     at module level is used as the insertion point. Handles version differences
     where a given function may not exist yet.
+
+    Uses regex instead of ast.parse so we don't depend on the Python version
+    used to run this installer matching the syntax of the target file.
     """
-    try:
-        tree = ast.parse(source)
-    except SyntaxError:
-        return None
-    funcs: dict[str, ast.AsyncFunctionDef | ast.FunctionDef] = {
-        node.name: node
-        for node in tree.body
-        if isinstance(node, (ast.AsyncFunctionDef, ast.FunctionDef))
-    }
     for name in _SLASH_ANCHORS:
-        node = funcs.get(name)
-        if node is not None:
-            return node.decorator_list[0].lineno if node.decorator_list else node.lineno
+        # Look for a line that starts the function definition, possibly preceded
+        # by decorators. We search backwards from the 'def' / 'async def' to
+        # capture the first decorator line.
+        pattern = re.compile(
+            rf"^(\s*@\w+.*\n)*(\s*async\s+def\s+{re.escape(name)}\b|\s*def\s+{re.escape(name)}\b)",
+            re.MULTILINE,
+        )
+        match = pattern.search(source)
+        if match:
+            # match.start() is the character offset; convert to 1-based line number
+            return source[: match.start()].count("\n") + 1
     return None
 
 
-def verify_syntax(source: str, label: str) -> bool:
+def verify_syntax(source: str, label: str, target: Path) -> bool:
     try:
         ast.parse(source)
         return True
-    except SyntaxError as exc:
-        print(f"[ERROR] Syntax check failed for {label}: {exc}")
-        return False
+    except SyntaxError:
+        # Local Python may be older than the syntax used by kimi-cli (e.g. PEP 695).
+        # Try to use the Python interpreter from the target environment.
+        root_pkg = target.parent.parent.parent  # .../site-packages/kimi_cli
+        candidate = _find_env_python(root_pkg)
+        if candidate is not None:
+            try:
+                result = subprocess.run(
+                    [str(candidate), "-c", "import ast, sys; ast.parse(sys.stdin.read())"],
+                    input=source, capture_output=True, text=True, encoding="utf-8", timeout=10,
+                    env={**os.environ, "PYTHONIOENCODING": "utf-8"},
+                )
+                if result.returncode == 0:
+                    return True
+                print(f"[ERROR] Syntax check failed for {label}: {result.stderr.strip()}")
+                return False
+            except Exception:
+                pass
+        print(f"[WARNING] Cannot verify syntax for {label} (local Python too old). Skipping check.")
+        return True
 
 
 # ── Slash patch ───────────────────────────────────────────────────────────────
@@ -253,7 +289,8 @@ def apply_slash(target: Path) -> bool:
         print(
             f"[ERROR] Could not find a suitable insertion anchor in slash.py.\n"
             f"        Tried: {tried}\n"
-            f"        The file structure may have changed in this version of kimi-cli."
+            f"        The file structure may have changed in this version of kimi-cli.\n"
+            f"        Try upgrading:  uv tool upgrade kimi-cli  (then re-run apply)"
         )
         return False
 
@@ -267,7 +304,7 @@ def apply_slash(target: Path) -> bool:
         + "".join(lines[insert_at - 1 :])
     )
 
-    if not verify_syntax(new_source, "slash.py"):
+    if not verify_syntax(new_source, "slash.py", target):
         print("[ERROR] Patch produced invalid syntax. Backup left untouched.")
         return False
 
@@ -318,7 +355,7 @@ def apply_prompt(target: Path) -> bool:
     new_source = source.replace(KB_ANCHOR, PATCH_KB + KB_ANCHOR, 1)
     new_source = new_source.replace(TIPS_ANCHOR, TIPS_INSERT + TIPS_ANCHOR, 1)
 
-    if not verify_syntax(new_source, "prompt.py"):
+    if not verify_syntax(new_source, "prompt.py", target):
         print("[ERROR] Patch produced invalid syntax. Backup left untouched.")
         return False
 
